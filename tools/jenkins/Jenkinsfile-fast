@@ -15,15 +15,15 @@ paths = [
     // "libraries/Плагины": "libraries"
     // "libraries": "libraries"
     "StepsRunner":"StepsRunner",
-    "Core/OpenForm": "OpenForm",
-    "Core/TestClient": "TestClient",
     "StepsGenerator": "StepsGenerator",
     "StepsProgramming":"StepsProgramming",
     "Core/FeatureLoad": "FeatureLoad",
     "Core/FeatureReader": "FeatureReader",
-    "Core/FeatureWriter": "FeatureWriter",
+    "Core/FeatureWrite": "FeatureWrite",
     "Core/Translate": "Translate",
-    "Core/ExpectedSomething": "ExpectedSomething"
+    "Core/OpenForm": "OpenForm",
+    "Core/ExpectedSomething": "ExpectedSomething",
+    "Core/TestClient": "TestClient"
     ]
 println paths
 
@@ -32,7 +32,7 @@ allureResults = []
 properties([
     disableConcurrentBuilds(),
     buildDiscarder(
-        logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '30', daysToKeepStr: '', numToKeepStr: '10'))
+        logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '30', daysToKeepStr: '', numToKeepStr: '30'))
 ])
 
 node("slave") {
@@ -44,7 +44,8 @@ node("slave") {
     checkout scm
     cmd('git config --local core.longpaths true', isUnix);
 
-    //env.LOGOS_CONFIG="logger.rootLogger=DEBUG"; // включение отладки продукта //env.RUNNER_ENV="debug";
+    // env.LOGOS_CONFIG="logger.rootLogger=DEBUG"; // включение отладки продукта //env.RUNNER_ENV="debug";
+    // env.LOGOS_LEVEL="DEBUG";
 
     cmd('git submodule update --init', isUnix)
 
@@ -63,11 +64,26 @@ node("slave") {
     //      cmd("opm install", isUnix)
     // }
     echo "Сборка бинарных файлов"
-    timeout(60){
+    timeout(90){
         timestamps {
             cmd("opm run init file --v8version 8.3.10", isUnix)
         }
     }
+
+    echo "Сборка пакета"
+    timeout(60){
+        command = """opm build ./"""
+        try{
+            cmd(command, isUnix)
+        } catch (e) {
+            echo "build status : ${e}"
+            currentBuild.result = 'UNSTABLE'
+        }
+    }
+
+    makeArtifacts('**/add*.ospx')
+    makeArtifacts('**/add*.zip')
+    // makeArtifacts('features')
   }
 
   stage('Контроль технического долга'){
@@ -140,7 +156,7 @@ node("slave") {
     def errors = []
     reportKey = "--reportsxunit \"ГенераторОтчетаJUnitXML{build/junit-smoke/junit.xml};ГенераторОтчетаAllureXMLВерсия2{build/allure/allure.xml}\" "
     timestamps {
-        timeout(7){
+        timeout(25){
             try{
                 cmd("vrunner xunit tests/smoke --settings tools/JSON/vrunner.json ${reportKey}", isUnix)
             } catch (e) {
@@ -149,8 +165,11 @@ node("slave") {
         }
     }
     makeJunit("build/junit-smoke", "*.xml")
+    prepareForAllure("build/allure/", 'allure-smoke', allureResults)
+
+    reportKey = "--reportsxunit \"ГенераторОтчетаJUnitXML{build/junit-smoke-ordinaryapp/junit.xml};ГенераторОтчетаAllureXMLВерсия2{build/allure-ordinaryapp/allure.xml}\" "
     timestamps {
-        timeout(15){
+        timeout(25){
             try{
                 cmd("vrunner xunit tests/smoke --ordinaryapp 1 --settings tools/JSON/vrunner.json ${reportKey}", isUnix)
             } catch (e) {
@@ -159,17 +178,17 @@ node("slave") {
         }
     }
     showErrors(errors)
-    makeJunit("build/junit-smoke", "*.xml")
+    makeJunit("build/junit-smoke-ordinaryapp", "*.xml")
     // makeAllure([[path:"build/allure"]])
     // allureResults << [path : "build/allure"]
-    prepareForAllure("build/allure/", 'allure-smoke', allureResults)
+    prepareForAllure("build/allure-ordinaryapp/", 'allure-smoke-ordinaryapp', allureResults)
   }
 
   stage('TDD Тестирование') {
     def errors = []
     reportKey = "--reportsxunit \"ГенераторОтчетаJUnitXML{build/junit-tdd/junit-tdd.xml};ГенераторОтчетаAllureXMLВерсия2{build/allure-tdd/allure.xml}\" "
 
-    timeout(10){
+    timeout(25){
         timestamps {
             try{
                 cmd("vrunner xunit tests/xunit --settings tools/JSON/vrunner.json ${reportKey}", isUnix)
@@ -179,7 +198,10 @@ node("slave") {
         }
     }
     makeJunit("build/junit-tdd", "*.xml")
-    timeout(15){
+    prepareForAllure("build/allure-tdd/", 'allure-tdd', allureResults)
+
+    reportKey = "--reportsxunit \"ГенераторОтчетаJUnitXML{build/junit-tdd-ordinaryapp/junit-tdd.xml};ГенераторОтчетаAllureXMLВерсия2{build/allure-tdd-ordinaryapp/allure.xml}\" "
+    timeout(25){
         timestamps {
             try{
                 cmd("vrunner xunit tests/xunit --ordinaryapp 1 --settings tools/JSON/vrunner.json ${reportKey}", isUnix)
@@ -189,19 +211,19 @@ node("slave") {
         }
     }
     showErrors(errors)
-    makeJunit("build/junit-tdd", "*.xml")
+    makeJunit("build/junit-tdd-ordinaryapp", "*.xml")
     // makeAllure([[path:"build/allure-tdd"]])
-    prepareForAllure("build/allure-tdd/", 'allure-tdd', allureResults)
+    prepareForAllure("build/allure-tdd-ordinaryapp/", 'allure-tdd-ordinaryapp', allureResults)
   }
 
   stage('BDD тестирование (библиотеки)'){
     def buildKey = "8310UF";
     def buildPath = "libraries";
 
-    def command = "vrunner vanessa --settings tools/JSON/vrunner.json  --path features/${buildPath}";
+    def command = "vrunner vanessa --settings tools/JSON/vrunner.json --path features/${buildPath}";
 
     def errors = []
-    timeout(15){
+    timeout(40){
         timestamps {
             try{
                 cmd(command, isUnix)
@@ -229,7 +251,7 @@ node("slave") {
             def command = "vrunner vanessa --settings tools/JSON/vrunner.json  --path features/${buildPath}";
 
             def errors = []
-            timeout(15){
+            timeout(60){
                 timestamps {
                     try{
                         cmd(command, isUnix)
@@ -276,23 +298,24 @@ node("slave") {
             // }
             makeAllure(resultsForAllure)
 
-            timeout(30){
-                command = """opm build ./"""
-                try{
-                    cmd(command, isUnix)
-                } catch (e) {
-                    echo "build status : ${e}"
-                    currentBuild.result = 'UNSTABLE'
-                }
-            }
-            
-            makeArtifacts('**/add*.ospx')
-            makeArtifacts('**/add*.zip')
+            // timeout(30){
+            //     command = """opm build ./"""
+            //     try{
+            //         cmd(command, isUnix)
+            //     } catch (e) {
+            //         echo "build status : ${e}"
+            //         currentBuild.result = 'UNSTABLE'
+            //     }
+            // }
+
+            // makeArtifacts('**/add*.ospx')
+            // makeArtifacts('**/add*.zip')
 
             makeArtifacts('**/ServiceBases/**/junitreport/**')
             makeArtifacts('**/ServiceBases/**/allurereport/**')
-            makeArtifacts('**/build/junit-tdd/*.xml')
-            makeArtifacts('**/build/junit-smoke/*.xml')
+            makeArtifacts('**/build/junit-tdd*/*.xml')
+            makeArtifacts('**/build/junit-smoke*/*.xml')
+            makeArtifacts('**/build/allure*/**/*.xml')
             makeArtifacts('**/build/**/*.txt')
             makeArtifacts('**/build/**/*.xml')
         }
@@ -335,7 +358,7 @@ def makeJunit(path, mask) {
     // cmd "rd /s /q ${path} & md ${path}"
     dir(path) {
         deleteDir()
-    }    
+    }
     dir(path) {
         def tempvar = []
     }
